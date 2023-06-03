@@ -49,32 +49,37 @@ static int echo_release(struct inode *inode, struct file *file){
 static ssize_t echo_write(struct file *file, const char __user *user_buffer,
                     size_t size, loff_t * offset)
 {
-    /*
-    struct cdrv_device_data *cdrv_data = &echo_devices[0];
-    ssize_t len = min(cdrv_data->size - *offset, size);
-    printk("writing:bytes=%d\n",size);
-    if (len buffer + *offset, user_buffer, len))
-        return -EFAULT;
+    printk(KERN_ALERT "echo::write");
 
+    struct echo_device_data *data = &echo_devices[0];
+    ssize_t len = min(ECHO_BUF_LEN - *offset, size);
+    printk(KERN_ALERT "actual size: %d, to size: %d, from size: %d\n", len, sizeof(data->buffer), size);
+    int status = copy_from_user(data->buffer, user_buffer, len);
+    if (status)
+    {
+        printk(KERN_ALERT, "Error copying data from user space (status code: %d)", status);
+        return -EFAULT;
+    }
     *offset += len;
-    */
-    return 0;
+    data->size += len;
+    return len;
 }
 
 static ssize_t echo_read(struct file *file, char __user *user_buffer,
                    size_t size, loff_t *offset)
 {
-    /*
-    struct cdrv_device_data *cdrv_data = &echo_devices[0];
-    ssize_t len = min(cdrv_data->size - *offset, size);
-
-    if (len buffer + *offset, len))
+    printk(KERN_ALERT "echo::read");
+    struct echo_device_data *data = &echo_devices[0];
+    ssize_t len = min(data->size - *offset, size);
+    printk(KERN_ALERT "actual size: %d, to size: %d, from size: %d\n", len, size, sizeof(data->buffer));
+    int status = copy_to_user(user_buffer, data->buffer, len);
+    if (status)
+    {
+        printk(KERN_ALERT "Error copying data to user space (status code: %d)", status);
         return -EFAULT;
-
+    }
     *offset += len;
-    printk("read:bytes=%d\n",size);
-    */
-    return 0;
+    return len;
 }
 
 const struct  file_operations echo_ops = 
@@ -91,7 +96,7 @@ const struct  file_operations echo_ops =
 
 static int __init echo_init(void)
 {
-    printk(KERN_INFO, "-> echo::init\n");
+    printk(KERN_INFO "-> echo::init\n");
     int status = register_chrdev_region(MKDEV(ECHO_MAJOR, 0), ECHO_MAX_DEVICES, "echo_device_driver");
     if (status != 0)
     {
@@ -107,11 +112,11 @@ static int __init echo_init(void)
              status = PTR_ERR(echo_devices[minor].cdrv_class);
              goto Error;
         }
-        echo_devices[minor].size = ECHO_BUF_LEN;
+        echo_devices[minor].size = 0;
         printk(KERN_INFO "Created %s device class\n", ECHO_CLASS_NAME);
         echo_devices[minor].cdrv_dev = device_create(echo_devices[minor].cdrv_class, NULL, MKDEV(ECHO_MAJOR, minor), NULL, ECHO_DEVICE_NAME);
     }
-    printk(KERN_INFO, "<- echo::init\n");
+    printk(KERN_INFO "<- echo::init\n");
     return 0;
 
     Error:

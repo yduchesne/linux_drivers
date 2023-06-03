@@ -2,20 +2,24 @@ MOD_MAME := echo
 DEV_NAME := echo
 obj-m := $(MOD_MAME).o
 
-dev_rm:
-	@major=$(awk "\\$$2= =\"$(MOD_MAME)\" {print \\$$1}" /proc/devices); \
-	mknod /dev/$(DEV_NAME)0 $$major 0
-	
+make_node:
+	@sudo ../scripts/make_node.sh $(MOD_MAME)
+
+remove_node:
+	@sudo ../scripts/remove_node.sh $(MOD_MAME)
+
 
 install:
-	@echo "Installing module $(MOD_MAME)" 
-	@sudo insmod ./$(MOD_MAME).ko
+	@sudo ../scripts/install_mod.sh $(MOD_MAME)
 
 uninstall:
-	@echo "Uninstalling module $(MOD_MAME)"
-	- @sudo rmmod $(MOD_MAME)
-all:
+	@sudo ../scripts/uninstall_mod.sh $(MOD_MAME)
+
+compile:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
-clean: uninstall
+all: compile remove_node uninstall install make_node
+	@echo "Compiled and installed module"
+
+clean: remove_node uninstall
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
