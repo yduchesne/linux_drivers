@@ -18,6 +18,7 @@ MODULE_DESCRIPTION("Takes dice count has input; returns dice roll result as outp
 
 #define DICE_PROC_NAME "dice"
 #define DICE_BUF_LEN 256
+#define DICE_INPUT_LEN 1
 #define DICE_DEFAULT_DICE_COUNT 2
 
 // ----------------------------------------------------------------------------
@@ -41,6 +42,29 @@ proc_device_data mod_data;
 // ----------------------------------------------------------------------------
 // IO operations
 
+static int tmp_copy(const char* src, int len, char* dst, int dstIndex)
+{
+    int count = 0;
+    for (int srcIndex = 0; srcIndex < len; srcIndex++, count++)
+    {
+        // (DICE_BUF_LEN - 1) -> ensuring we have one slot left for the 
+        // string termination character at the end.
+        if (dstIndex >= (DICE_BUF_LEN - 1))
+        {
+            printk(KERN_DEBUG "Cannot copy: end of destination buffer reached\n");
+            goto Error;
+        }
+        printk(KERN_DEBUG "Copying character %c in source buffer at index %d to destination buffer at index %d\n", src[srcIndex], srcIndex, (dstIndex + count));
+        dst[dstIndex + count] = src[srcIndex];
+    }
+
+    return count;
+
+    Error:
+        return -1;
+}
+
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
 static ssize_t dice_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 #else
@@ -50,26 +74,27 @@ static int dice_write(struct file *file,const char * buf, unsigned long count, v
     printk(KERN_INFO "dice::write");
     mutex_lock(&mod_data.crit_sec_mutex);
 
-    proc_device_data* p_mod_data = &mod_data;
-    size_t len = min(DICE_BUF_LEN, count);
-    printk(KERN_INFO "actual size: %lu, to size: %lu, from size: %lu\n", len, sizeof(p_mod_data->buffer), count);
-    int status = copy_from_user(p_mod_data->buffer, buf, len);
+    size_t len = min(DICE_BUF_LEN - 1, count);
+    printk(KERN_INFO "actual size: %lu, to size: %lu, from size: %lu\n", len, DICE_BUF_LEN, count);
+    int status = copy_from_user(mod_data.buffer, buf, len);
     // Insuring that buffer is a valid string
-    p_mod_data->buffer[len - 1] = "\0";
+    mod_data.buffer[len] = '\0';
     if (status)
     {
         printk(KERN_ERR "Error copying data from user space (status code: %d)", status);
         goto Error;
     }
-    printk(KERN_ERR "Got dice count value from user: %s\n", p_mod_data->buffer);
+    printk(KERN_DEBUG "Got dice count from user: '%s' (copied %lu chars. %lu)\n", mod_data.buffer, len, strlen(mod_data.buffer));
+
     int new_dice_count;
-    status = kstrtoint(p_mod_data->buffer, 0, &new_dice_count);
+    status = kstrtoint(mod_data.buffer, 10, &new_dice_count);
     if (status)
     {
-        printk(KERN_INFO "Converting (status code: %d)", status);
+        printk(KERN_ERR "Could no convert dice count '%s' (status code: %d)\n", mod_data.buffer, status);
         goto Error;        
     }
-    p_mod_data->dice_count = new_dice_count;
+    printk(KERN_INFO "Parsed dice count: %d\n", new_dice_count);
+    mod_data.dice_count = new_dice_count;
 
     mutex_unlock(&mod_data.crit_sec_mutex);
     return len;
@@ -103,6 +128,7 @@ static int dice_read(char *buf, char **start, off_t offset, int len, int *eof, v
         unsigned dice_roll_result;
         char fmt_buf[DICE_BUF_LEN];
         int fmt_len;
+        int status = 0;
         for (int dice_num = 0; dice_num < mod_data.dice_count; dice_num++)
         {
             
@@ -118,6 +144,11 @@ static int dice_read(char *buf, char **start, off_t offset, int len, int *eof, v
                 // the string termination char ('\0')
                 fmt_len = scnprintf(fmt_buf, DICE_BUF_LEN, "%u", dice_roll_result);
             }
+            // Adding EOL character since we're processing the result for the last dice
+            else if (dice_num == mod_data.dice_count - 1)
+            {
+                fmt_len = scnprintf(fmt_buf, DICE_BUF_LEN, ",%u\n", dice_roll_result);
+            }
             else
             {
                 fmt_len = scnprintf(fmt_buf, DICE_BUF_LEN, ",%u", dice_roll_result);
@@ -127,34 +158,29 @@ static int dice_read(char *buf, char **start, off_t offset, int len, int *eof, v
                 printk(KERN_ERR "Error converting dice roll result: %u\n", dice_roll_result);
                 goto Error;
             }
-            printk(KERN_INFO "Got result for dice %d: %lu (temp string: %s)\n", dice_num,  dice_roll_result, fmt_buf);
-
- 
-            // Usin fmt_lem - 1 as we want to exclude copying the '\0' character
-            // from the source buffer to the target (we're going to add the '\0'
-            // character to the target and the end of all dice roll results)
-            for (int srcIndex = 0; srcIndex < fmt_len - 1; srcIndex++, fmt_total_len++)
+            printk(KERN_DEBUG "Got temp result for dice %d: %lu (string: %s)\n", dice_num, dice_roll_result, fmt_buf);
+            status =  tmp_copy(fmt_buf, fmt_len, mod_data.buffer, fmt_total_len);
+            if (status < 0)
             {
-                // (DICE_BUF_LEN - 1) -> ensuring we have one slot left for the 
-                // string termination character at the end.
-                if ( fmt_total_len >= (DICE_BUF_LEN - 1) )
-                {
-                    printk(KERN_ERR "Cannot populate dice roll result: end of output buffer reached\n");
-                    goto Error;
-                }
-                printk(KERN_INFO "Copying character %c at index %d to target buffer index %d\n", fmt_buf[srcIndex], srcIndex, fmt_total_len);
-                mod_data.buffer[fmt_total_len] = fmt_buf[srcIndex];
+                goto Error;
             }
+            printk(KERN_DEBUG "Copied %d character(s) to target buffer\n", status);
+            fmt_total_len += status;
         }
-        
-        // Accounting for string termination character
+
+        // Accounting for EOL and string termination character
         fmt_total_len += 1;
         // Now adding string termination character to result
         mod_data.buffer[fmt_total_len - 1] = '\0';
-        //printk(KERN_INFO "Got dice roll result (dice_count: %d): %s\n", mod_data.dice_count, mod_data.buffer);
-        const char* tmp = "Result!!!";
-        snprintf(buf, len, "%s", tmp);
-        //snprintf(buf, len, "%s", mod_data.buffer);
+        printk(KERN_INFO "Got dice roll result: %s\n", mod_data.buffer);
+        ssize_t  actual_len = min(fmt_total_len, len);
+
+        status = copy_to_user(buf, mod_data.buffer, actual_len);
+        if (status)
+        {
+          printk(KERN_ERR "Error copying data to user space (status code: %d)", status);
+          goto Error;
+        }
     }
 
     mutex_unlock(&mod_data.crit_sec_mutex);
