@@ -4,7 +4,7 @@
 #include <linux/kdev_t.h>       // Needed for dev_t 
 #include <linux/fs.h>           // Needed for register/unregister_chrdev_region
 #include <linux/cdev.h>         // Needed for cdev_xxxx functions
-
+#include <linux/mutex.h>        // Needed for mutex
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("yduchesne");
@@ -20,7 +20,7 @@ MODULE_DESCRIPTION("Takes input from user-space and echoes it back");
 #define ECHO_BUF_LEN 256
 
 // ----------------------------------------------------------------------------
-// Device-related
+// Device-related & concurrency
 
 struct echo_device_data {
     struct cdev cdev;
@@ -31,7 +31,9 @@ struct echo_device_data {
     struct device* cdrv_dev;
 };
 
- struct echo_device_data echo_devices[ECHO_MAX_DEVICES];
+struct echo_device_data echo_devices[ECHO_MAX_DEVICES];
+struct mutex crit_sec_mutex;
+
 
 // ----------------------------------------------------------------------------
 // IO operations
@@ -49,36 +51,43 @@ static int echo_release(struct inode *inode, struct file *file){
 static ssize_t echo_write(struct file *file, const char __user *user_buffer,
                     size_t size, loff_t * offset)
 {
-    printk(KERN_ALERT "echo::write");
+    printk(KERN_INFO "echo::write");
+    mutex_lock(&crit_sec_mutex);
 
     struct echo_device_data *data = &echo_devices[0];
     ssize_t len = min(ECHO_BUF_LEN - *offset, size);
-    printk(KERN_ALERT "actual size: %d, to size: %d, from size: %d\n", len, sizeof(data->buffer), size);
+    printk(KERN_INFO "actual size: %d, to size: %d, from size: %d\n", len, sizeof(data->buffer), size);
     int status = copy_from_user(data->buffer, user_buffer, len);
     if (status)
     {
-        printk(KERN_ALERT, "Error copying data from user space (status code: %d)", status);
+        printk(KERN_INFO, "Error copying data from user space (status code: %d)", status);
+        mutex_unlock(&crit_sec_mutex);
         return -EFAULT;
     }
     *offset += len;
     data->size += len;
+    mutex_unlock(&crit_sec_mutex);
     return len;
 }
 
 static ssize_t echo_read(struct file *file, char __user *user_buffer,
                    size_t size, loff_t *offset)
 {
-    printk(KERN_ALERT "echo::read");
+    printk(KERN_INFO "echo::read");
+    mutex_lock(&crit_sec_mutex);
+
     struct echo_device_data *data = &echo_devices[0];
     ssize_t len = min(data->size - *offset, size);
-    printk(KERN_ALERT "actual size: %d, to size: %d, from size: %d\n", len, size, sizeof(data->buffer));
+    printk(KERN_INFO "actual size: %d, to size: %d, from size: %d\n", len, size, sizeof(data->buffer));
     int status = copy_to_user(user_buffer, data->buffer, len);
     if (status)
     {
-        printk(KERN_ALERT "Error copying data to user space (status code: %d)", status);
+        printk(KERN_INFO "Error copying data to user space (status code: %d)", status);
+        mutex_unlock(&crit_sec_mutex);
         return -EFAULT;
     }
     *offset += len;
+    mutex_unlock(&crit_sec_mutex);
     return len;
 }
 
@@ -116,11 +125,12 @@ static int __init echo_init(void)
         printk(KERN_INFO "Created %s device class\n", ECHO_CLASS_NAME);
         echo_devices[minor].cdrv_dev = device_create(echo_devices[minor].cdrv_class, NULL, MKDEV(ECHO_MAJOR, minor), NULL, ECHO_DEVICE_NAME);
     }
+    mutex_init(&crit_sec_mutex);
     printk(KERN_INFO "<- echo::init\n");
     return 0;
 
     Error:
-        printk(KERN_ALERT, "Error occurred. Aborting module initialization (status code: %i)\n", status);
+        printk(KERN_INFO, "Error occurred. Aborting module initialization (status code: %i)\n", status);
         return status;
 }
 
