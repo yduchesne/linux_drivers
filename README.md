@@ -30,7 +30,7 @@ sudo bash -c "cat /dev/echo"
 
 ## echo with ioctl
 
-- Source: [src/echo_ioctl/echo_ioctl.c](src/echo/echo_ioctl.c)
+- Source: [src/echo_ioctl/echo.c](src/echo_ioctl/echo.c)
 - Description: 
   - Takes a user-space string, write its to printk, echoes it back.
   - Takes 'clear' and 'reverse' commands, which respectively clear and reverse
