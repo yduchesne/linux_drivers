@@ -5,6 +5,9 @@
 #include <linux/fs.h>           // Needed for register/unregister_chrdev_region
 #include <linux/cdev.h>         // Needed for cdev_xxxx functions
 #include <linux/mutex.h>        // Needed for mutex
+#include <linux/ioctl.h>        // Needed for the IOCTL-related macros
+
+#include "echo_ioctl.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("yduchesne");
@@ -18,6 +21,9 @@ MODULE_DESCRIPTION("Takes input from user-space and echoes it back");
 #define ECHO_DEVICE_NAME "echo"
 #define ECHO_CLASS_NAME "echo_class"
 #define ECHO_BUF_LEN 256
+
+#define ECHO_IOCTL_CLEAR _IO(ECHO_IOCTL_MAGIC, ECHO_IOCTL_CLEAR_CMD)
+#define ECHO_IOCTL_REVERSE _IO(ECHO_IOCTL_MAGIC, ECHO_IOCTL_REVERSE_CMD)
 
 // ----------------------------------------------------------------------------
 // Device-related & concurrency
@@ -91,13 +97,45 @@ static ssize_t echo_read(struct file *file, char __user *user_buffer,
     return len;
 }
 
+static long echo_ioctl(struct file *, unsigned int cmd, unsigned long arg)
+{
+    struct echo_device_data *data = &echo_devices[0];
+    
+    switch (cmd)
+    {
+        case ECHO_IOCTL_CLEAR:
+            printk(KERN_INFO "echo::ioctl::clear");
+            data->size = 0;
+            data->buffer[0] = '\0';
+            return 0;
+        case ECHO_IOCTL_REVERSE:
+            printk(KERN_INFO "echo::ioctl::reverse");   
+            int i = 0;
+            int j = data->size - 1;
+            while (i < j)
+            {
+                char tmp = data->buffer[i];
+                data->buffer[i] = data->buffer[j];
+                data->buffer[j] = tmp;
+                i++;
+                j--;
+            }
+            return 0;
+        default:
+            printk(KERN_ERR "echo::ioctl::invalid_cmd");
+            return -EINVAL;
+    }
+
+}
+
 const struct  file_operations echo_ops = 
 {
     .owner = THIS_MODULE,
     .open = echo_open,
     .release = echo_release,
     .read = echo_read,
-    .write = echo_write
+    .write = echo_write,
+    .unlocked_ioctl = echo_ioctl
 };
 
 // ----------------------------------------------------------------------------
