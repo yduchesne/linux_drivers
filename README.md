@@ -22,7 +22,6 @@
 
 ### Sample Interactions
 
-
 ```
 sudo bash -c "echo foobar > /dev/echo"
 sudo bash -c "cat /dev/echo"
@@ -45,7 +44,6 @@ sudo bash -c "cat /dev/echo"
 
 ### Sample Interactions
 
-
 ```
 sudo bash -c "echo foobar > /dev/echo"
 sudo ./echo_client reverse
@@ -56,8 +54,6 @@ sudo bash -c "cat /dev/echo"
 
 ```
 
-
-
 ## dice
 
 - Source: [src/dice/dice.c](src/dice/dice.c)
@@ -67,6 +63,7 @@ sudo bash -c "cat /dev/echo"
 - Goals:
     - To explore kernel module lifecycle.
     - To make a read-write proc entry available under procfs.
+    - To explore the use of vmalloc.
 
 ### Sample Interactions
 
@@ -78,3 +75,23 @@ $ sudo bash -c "cat /proc/dice"
 $ 3,4,4,6,1,4
 ```
 
+## magic8ball
+
+- Source: [src/magic8ball/magic8ball.c](src/magic8ball/magic8ball.c)
+- Description: Kernel module that simulates displaying random good/bad fortune
+  messages.
+- The module makes a read-write proc entry available under `/proc/magic8ball`.
+- Goals:
+    - To explore kernel module lifecycle.
+    - To make a read-write proc entry available under procfs.
+    - To explore the joint use of kalloc/vmalloc.
+
+### Sample Interactions
+
+```
+$ sudo bash -c "cat /proc/magic8ball"
+Better not tell you now. My sources say no. 
+$ sudo bash -c "echo 4 > /proc/magic8ball"
+$ sudo bash -c "cat /proc/magic8ball"
+Outlook not so good. Cannot predict now. Don't count on it. Very doubtful.
+```

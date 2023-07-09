@@ -1,4 +1,4 @@
-MOD_MAME := dice
+MOD_MAME := magic8ball
 obj-m := $(MOD_MAME).o
 
 install:
