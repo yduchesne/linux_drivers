@@ -39,6 +39,7 @@ sudo bash -c "cat /dev/echo"
 - Goals:
     - To explore the kernel driver lifecyle.
     - To provide read/write primitives.
+    - To explore ioctl support.
     - To make the driver available under `/dev` using the 
       Linux commands for that purpose.
 
