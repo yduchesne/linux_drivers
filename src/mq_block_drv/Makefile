@@ -1,7 +1,7 @@
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
-OBJ := main
+OBJ := mq_block_drv
 
 obj-m := $(OBJ).o
 
