@@ -86,6 +86,8 @@ static struct blk_ram_dev_t *blk_ram_dev = NULL;
 static blk_status_t blk_ram_queue_rq(struct blk_mq_hw_ctx *hctx,
 									 const struct blk_mq_queue_data *bd)
 {
+	pr_debug("-> Handling block request");
+
 	struct request *rq = bd->rq;
 	blk_status_t err = BLK_STS_OK;
 	struct bio_vec bv;
@@ -131,6 +133,9 @@ static blk_status_t blk_ram_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 end_request:
+	if (err != BLK_STS_OK)
+		pr_debug("Error handling block request: 0x%x", err);
+	pr_debug("-> Finished handling block request");
 	blk_mq_end_request(rq, err);
 	return BLK_STS_OK;
 }
