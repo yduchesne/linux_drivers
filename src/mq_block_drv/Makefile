@@ -15,19 +15,22 @@ run:  load
 compile:
 	@$(MAKE) -C $(KDIR) M=$(PWD) modules 
 
-load:	compile
+load: compile
 	@echo "try \"tail -f /var/log/messages\" in another window(as root) ..";
 	sudo insmod ./$(OBJ).ko
-	#sync
+	sync
 	sudo mke2fs /dev/$(DEVNAME)
-	#su -c mkdir /tmp/BDD
-	#sudo su -c mount /dev/$(DEVNAME) /tmp/BDD
+	mkdir /tmp/BDD
+	mount /dev/$(DEVNAME) /tmp/BDD
 
 unload: 
-	#-umount /dev/$(DEVNAME)
-	-rm -fr /tmp/BDD
-	-sudo su -c "rmmod $(OBJ)"
+	umount /dev/$(DEVNAME)
+	rm -fr /tmp/BDD
+	sudo rmmod $(OBJ)
 
 clean: unload
-	#-ls -l /tmp/BDD
-	-@rm -fr $(OBJ).o $(OBJ).ko $(OBJ).*.* .$(OBJ).* .tmp_versions* [mM]odule*
+	rm -fr $(OBJ).o $(OBJ).ko $(OBJ).*.* .$(OBJ).* .tmp_versions* [mM]odule*
+
+test:
+	sudo cp content.txt /tmp/BDD/
+	sudo cat /tmp/BDD/content.txt

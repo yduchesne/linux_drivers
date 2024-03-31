@@ -12,6 +12,11 @@
  *   enhance explanations).
  *
  */
+
+// Logging 
+// see: https://www.kernel.org/doc/html/next/core-api/printk-basics.html
+#define pr_fmt(fmt) "%s.%s[%d] " fmt, KBUILD_MODNAME, __func__, __LINE__
+
 #include "asm/page.h"
 #include "linux/blk_types.h"
 #include "linux/sysfb.h"
@@ -20,15 +25,16 @@
 #include <linux/blk-mq.h>
 #include <linux/idr.h>
 
+// Units
 #define KERNEL_SECTOR_SIZE 512
 #define KB_PER_MB 1024
-#define B_PER_KB (KB_PER_MB * 1024)
+#define B_PER_MB (KB_PER_MB * 1024)
 
-unsigned long capacity_mb = 40;
-unsigned long max_segments = 32;
-unsigned long max_segment_size = 65536;
-unsigned long lbs = PAGE_SIZE;
-unsigned long pbs = PAGE_SIZE;
+uint32_t capacity_mb = 40;
+uint32_t max_segments = 32;
+uint32_t max_segment_size = 65536;
+uint32_t lbs = PAGE_SIZE;
+uint32_t pbs = PAGE_SIZE;
 
 /**
  * @brief Struct used to preserve the driver's in-memory state.
@@ -152,34 +158,41 @@ static const struct block_device_operations blk_ram_rq_ops = {
  */
 static int __init blk_ram_init(void)
 {
+	pr_notice("-> Initializing...");
 	int ret = 0;
 	int minor;
 	struct gendisk *disk;
-	loff_t data_size_bytes = capacity_mb >> 20;
+	uint64_t capacity_bytes = capacity_mb * B_PER_MB; //capacity_mb >> 20;
+	pr_notice("capacity_mb=0x%x (%u)", capacity_mb, capacity_mb);
+	pr_notice("capacity_bytes=0x%llx (%llu)", capacity_bytes, capacity_bytes);
 
+	pr_notice("Calling register_blkdev");
 	ret = register_blkdev(0, "blkram");
 	if (ret < 0)
 		return ret;
 
 	// Returned value is major no.
 	major = ret;
+	pr_notice("Got major no: %d", major);
 
 	// Allocating memory for driver state
 	blk_ram_dev = kzalloc(sizeof(struct blk_ram_dev_t), GFP_KERNEL);
 
 	if (blk_ram_dev == NULL)
 	{
-		pr_err("memory allocation failed for blk_ram_dev\n");
+		pr_err("memory allocation failed for blk_ram_dev");
 		ret = -ENOMEM;
 		goto unregister_blkdev;
 	}
 
 	// Capacity in number of sectors
-	blk_ram_dev->capacity_num_sectors = data_size_bytes >> SECTOR_SHIFT;
-	blk_ram_dev->data = kvmalloc(data_size_bytes, GFP_KERNEL);
+	blk_ram_dev->capacity_num_sectors = capacity_bytes >> SECTOR_SHIFT;
+	blk_ram_dev->data = kvmalloc(capacity_bytes, GFP_KERNEL);
+	pr_notice("blk_ram_dev->capacity_num_sectors: %llu", blk_ram_dev->capacity_num_sectors);
+
 	if (blk_ram_dev->data == NULL)
 	{
-		pr_err("memory allocation failed for the RAM disk\n");
+		pr_err("memory allocation failed for the RAM disk");
 		ret = -ENOMEM;
 		goto data_err;
 	}
@@ -210,7 +223,7 @@ static int __init blk_ram_init(void)
 	if (IS_ERR(disk))
 	{
 		ret = PTR_ERR(disk);
-		pr_err("Error allocating a disk\n");
+		pr_err("Error allocating a disk");
 		goto tagset_err;
 	}
 
@@ -228,11 +241,16 @@ static int __init blk_ram_init(void)
 	disk->flags = GENHD_FL_NO_PART;
 	set_capacity(disk, blk_ram_dev->capacity_num_sectors);
 
+	pr_notice("Disk attributes:");
+	pr_notice("- major: %d", disk->major);
+	pr_notice("- first_minor: %d", disk->first_minor);
+	pr_notice("- minors: %d", disk->minors);
+
 	ret = add_disk(disk);
 	if (ret < 0)
 		goto cleanup_disk;
 
-	pr_info("module loaded\n");
+	pr_notice("<- Initialization completed\n");
 	return 0;
 
 cleanup_disk:
@@ -244,11 +262,13 @@ data_err:
 unregister_blkdev:
 	unregister_blkdev(major, "blkram");
 
+	pr_notice("<- Initialization failed\n");
 	return ret;
 }
 
 static void __exit blk_ram_exit(void)
 {
+	pr_notice("-> Exiting module...\n");
 	if (blk_ram_dev->disk)
 	{
 		del_gendisk(blk_ram_dev->disk);
@@ -257,7 +277,7 @@ static void __exit blk_ram_exit(void)
 	unregister_blkdev(major, "blkram");
 	kfree(blk_ram_dev);
 
-	pr_info("module unloaded\n");
+	pr_notice("<- Exited module\n");
 }
 
 module_init(blk_ram_init);
