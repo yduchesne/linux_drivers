@@ -1,3 +1,17 @@
+/**
+ * @file ramdrv.c
+ * @author yduchesne
+ * @brief Basic block driver implementation.
+ *
+ * Largely based on https://blog.pankajraghav.com/2022/11/30/BLKRAM.html.
+ *
+ * Objectives:
+ *
+ * - To serve as a block driver template.
+ * - To serve as learning tool (documentation/comments were added to
+ *   enhance explanations).
+ *
+ */
 #include "asm/page.h"
 #include "linux/blk_types.h"
 #include "linux/sysfb.h"
@@ -6,17 +20,56 @@
 #include <linux/blk-mq.h>
 #include <linux/idr.h>
 
+#define KERNEL_SECTOR_SIZE 512
+#define KB_PER_MB 1024
+#define B_PER_KB (KB_PER_MB * 1024)
+
 unsigned long capacity_mb = 40;
 unsigned long max_segments = 32;
 unsigned long max_segment_size = 65536;
 unsigned long lbs = PAGE_SIZE;
 unsigned long pbs = PAGE_SIZE;
 
+/**
+ * @brief Struct used to preserve the driver's in-memory state.
+ *
+ */
+struct blk_ram_dev_t
+{
+	/**
+	 * @brief Storage capacity in number of 512-byte sectors.
+	 *
+	 */
+	sector_t capacity_num_sectors;
 
-struct blk_ram_dev_t {
-	sector_t capacity;
+	/**
+	 * @brief The driver's data (kept in memory).
+	 *
+	 */
 	u8 *data;
 	struct blk_mq_tag_set tag_set;
+
+	/**
+	 * @brief Corresponds to "our" RAM disk device.
+	 *
+	 * struct gendisk is the kernel's representation of an individual disk
+	 * devices. The following fields of gendisk must be initialized:
+	 *
+	 * - major: the major number of this device: either a static major assigned
+	 *          to this driver or one that is obtained dynamically from
+	 *          register_blkdev().
+	 * - first_minor: the first minor number to use.
+	 * - minors: the number of minor numbers to allocate. A drive must use at
+	 *           least one minor number.
+	 * 	 - If a drive is partitionable, there has to be one minor number for each
+	 *     possible partition.
+	 *   - A common value for minors is 16, which allows for the full disk device
+	 *     and 15 partitions.
+	 *   - Some disk drivers use 64 minor numbers for each device.
+	 * - disk_name: the disk's name, used in places like /proc/partitions and in
+	 *              creating a sysfs directory for the device.
+	 *
+	 */
 	struct gendisk *disk;
 };
 
@@ -25,28 +78,39 @@ static DEFINE_IDA(blk_ram_indexes);
 static struct blk_ram_dev_t *blk_ram_dev = NULL;
 
 static blk_status_t blk_ram_queue_rq(struct blk_mq_hw_ctx *hctx,
-				     const struct blk_mq_queue_data *bd)
+									 const struct blk_mq_queue_data *bd)
 {
 	struct request *rq = bd->rq;
 	blk_status_t err = BLK_STS_OK;
 	struct bio_vec bv;
 	struct req_iterator iter;
-	loff_t pos = blk_rq_pos(rq) << SECTOR_SHIFT;
 	struct blk_ram_dev_t *blkram = hctx->queue->queuedata;
-	loff_t data_len = (blkram->capacity << SECTOR_SHIFT);
+
+	// Shifting the sector number to obtain the block offset in number of byte
+	// (SECTOR_SHIFT is set to 9: sectors are traditionally 512 bytes in size
+	// and shifting left by 9 bits is equivalent to multiplying by 512).
+	// The following formula can be referred to:
+	//   block_offset = sector_num << SECTOR_SHIFT.
+	loff_t pos = blk_rq_pos(rq) << SECTOR_SHIFT;
+	// Similarly: number of sectors to number of bytes
+	loff_t capacity_bytes = blkram->capacity_num_sectors << SECTOR_SHIFT;
 
 	blk_mq_start_request(rq);
 
-	rq_for_each_segment(bv, rq, iter) {
+	rq_for_each_segment(bv, rq, iter)
+	{
 		unsigned int len = bv.bv_len;
 		void *buf = page_address(bv.bv_page) + bv.bv_offset;
 
-		if (pos + len > data_len) {
+		// Ensure requested length is within device's capacity.
+		if (pos + len > capacity_bytes)
+		{
 			err = BLK_STS_IOERR;
 			break;
 		}
 
-		switch (req_op(rq)) {
+		switch (req_op(rq))
+		{
 		case REQ_OP_READ:
 			memcpy(buf, blkram->data + pos, len);
 			break;
@@ -73,34 +137,54 @@ static const struct block_device_operations blk_ram_rq_ops = {
 	.owner = THIS_MODULE,
 };
 
+// ============================================================================
+// Lifecycle
+
+/**
+ * @brief Performs registrations and other init tasks.
+ *
+ * Mainly, registration consists of:
+ *
+ * 1. Registering the driver.
+ * 2. Registering the disk.
+ *
+ * @return int status code.
+ */
 static int __init blk_ram_init(void)
 {
 	int ret = 0;
 	int minor;
 	struct gendisk *disk;
-	loff_t data_size_bytes = capacity_mb << 20;
+	loff_t data_size_bytes = capacity_mb >> 20;
 
 	ret = register_blkdev(0, "blkram");
 	if (ret < 0)
 		return ret;
 
+	// Returned value is major no.
 	major = ret;
+
+	// Allocating memory for driver state
 	blk_ram_dev = kzalloc(sizeof(struct blk_ram_dev_t), GFP_KERNEL);
 
-	if (blk_ram_dev == NULL) {
+	if (blk_ram_dev == NULL)
+	{
 		pr_err("memory allocation failed for blk_ram_dev\n");
 		ret = -ENOMEM;
 		goto unregister_blkdev;
 	}
 
-	blk_ram_dev->capacity = data_size_bytes >> SECTOR_SHIFT;
+	// Capacity in number of sectors
+	blk_ram_dev->capacity_num_sectors = data_size_bytes >> SECTOR_SHIFT;
 	blk_ram_dev->data = kvmalloc(data_size_bytes, GFP_KERNEL);
-	if (blk_ram_dev->data == NULL) {
+	if (blk_ram_dev->data == NULL)
+	{
 		pr_err("memory allocation failed for the RAM disk\n");
 		ret = -ENOMEM;
 		goto data_err;
 	}
 
+	// Initializing tag set
 	memset(&blk_ram_dev->tag_set, 0, sizeof(blk_ram_dev->tag_set));
 	blk_ram_dev->tag_set.ops = &blk_ram_mq_ops;
 	blk_ram_dev->tag_set.queue_depth = 128;
@@ -114,6 +198,7 @@ static int __init blk_ram_init(void)
 	if (ret)
 		goto data_err;
 
+	// Allocating struct gendisk instance
 	disk = blk_ram_dev->disk =
 		blk_mq_alloc_disk(&blk_ram_dev->tag_set, blk_ram_dev);
 
@@ -122,7 +207,8 @@ static int __init blk_ram_init(void)
 	blk_queue_max_segments(disk->queue, max_segments);
 	blk_queue_max_segment_size(disk->queue, max_segment_size);
 
-	if (IS_ERR(disk)) {
+	if (IS_ERR(disk))
+	{
 		ret = PTR_ERR(disk);
 		pr_err("Error allocating a disk\n");
 		goto tagset_err;
@@ -140,7 +226,7 @@ static int __init blk_ram_init(void)
 	snprintf(disk->disk_name, DISK_NAME_LEN, "blkram");
 	disk->fops = &blk_ram_rq_ops;
 	disk->flags = GENHD_FL_NO_PART;
-	set_capacity(disk, blk_ram_dev->capacity);
+	set_capacity(disk, blk_ram_dev->capacity_num_sectors);
 
 	ret = add_disk(disk);
 	if (ret < 0)
@@ -163,7 +249,8 @@ unregister_blkdev:
 
 static void __exit blk_ram_exit(void)
 {
-	if (blk_ram_dev->disk) {
+	if (blk_ram_dev->disk)
+	{
 		del_gendisk(blk_ram_dev->disk);
 		put_disk(blk_ram_dev->disk);
 	}
@@ -176,6 +263,5 @@ static void __exit blk_ram_exit(void)
 module_init(blk_ram_init);
 module_exit(blk_ram_exit);
 
-MODULE_AUTHOR("Pankaj");
+MODULE_AUTHOR("yduchesne");
 MODULE_LICENSE("GPL");
-

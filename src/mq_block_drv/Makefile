@@ -1,7 +1,9 @@
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
-OBJ := mq_block_drv
+OBJ := ramdrv
+
+DEVNAME := blkram
 
 obj-m := $(OBJ).o
 
@@ -15,18 +17,14 @@ compile:
 
 load:	compile
 	@echo "try \"tail -f /var/log/messages\" in another window(as root) ..";
-	sudo su -c "insmod ./$(OBJ).ko"
-	sync;
-	sudo su -c mke2fs /dev/sbd
-	su -c mkdir /tmp/BDD
-	sudo su -c mount /dev/sbd /tmp/BDD
-	df -k /tmp/BDD
-	ls -l /tmp/BDD
-	cp /etc/hosts /tmp/BDD/
-	ls -l /tmp/BDD
+	sudo insmod ./$(OBJ).ko
+	#sync
+	sudo mke2fs /dev/$(DEVNAME)
+	#su -c mkdir /tmp/BDD
+	#sudo su -c mount /dev/$(DEVNAME) /tmp/BDD
 
 unload: 
-	-umount /dev/sbd
+	#-umount /dev/$(DEVNAME)
 	-rm -fr /tmp/BDD
 	-sudo su -c "rmmod $(OBJ)"
 
